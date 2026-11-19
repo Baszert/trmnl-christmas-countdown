@@ -1,0 +1,987 @@
+{%- comment -%}
+  ASCII Christmas Countdown, shared code.
+  The scene is drawn by the script below. Liquid only passes the date, the
+  user's locale and the plugin settings, so the plugin needs no data source.
+{%- endcomment -%}
+{%- assign cf = trmnl.plugin_settings.custom_fields_values -%}
+{%- assign now_s = trmnl.system.timestamp_utc | plus: trmnl.user.utc_offset -%}
+{%- assign today_s = now_s | date: "%Y-%m-%d" | date: "%s" | plus: 0 -%}
+{%- assign y = now_s | date: "%Y" | plus: 0 -%}
+{%- assign xmas_s = y | append: "-12-25" | date: "%s" | plus: 0 -%}
+{%- if xmas_s < today_s -%}
+  {%- assign y = y | plus: 1 -%}
+  {%- assign xmas_s = y | append: "-12-25" | date: "%s" | plus: 0 -%}
+{%- endif -%}
+{%- assign xmas_days = xmas_s | minus: today_s | divided_by: 86400 -%}
+{%- capture xmas_attrs -%}
+data-ts="{{ trmnl.system.timestamp_utc }}" data-offset="{{ trmnl.user.utc_offset | default: 0 }}" data-locale="{{ trmnl.user.locale | default: 'en' }}" data-lang="{{ cf.language | default: 'auto' }}" data-mode="{{ cf.mode | default: 'combined' }}" data-counter="{{ cf.counter | default: 'days' }}" data-colors="{{ cf.colors | default: 'auto' }}" data-test="{{ cf.test_date }}"
+{%- endcapture -%}
+
+<style>
+  /* ASCII art needs a monospace grid and an overlay card; the framework has no classes for either. */
+  .xmas { position: relative; width: 100%; height: 100%; overflow: hidden; }
+  .xmas__art {
+    position: absolute; inset: 0; margin: 0; padding: 0;
+    font-family: "DejaVu Sans Mono", "Liberation Mono", "Menlo", "Courier New", monospace;
+    font-weight: 700; line-height: 0.62; white-space: pre; letter-spacing: 0;
+    -webkit-font-smoothing: none; font-smooth: never;
+  }
+  .xmas__card {
+    position: absolute; display: flex; flex-direction: column; justify-content: center;
+    align-items: center; text-align: center; box-sizing: border-box;
+  }
+  .xmas__card > * { max-width: 100%; }
+  .xmas__datebox { position: absolute; white-space: nowrap; }
+</style>
+
+<script>
+(function () {
+  if (window.XMAS_ASCII) return;
+  window.XMAS_ASCII = true;
+
+  // ---------------------------------------------------------------- text
+  // Each phrase is [singular, plural], Polish is [one, few, many].
+  var T = {
+    en: { title: 'Christmas Countdown', pre: ['', ''], days: ['day until Christmas', 'days until Christmas'], sleeps: ['sleep until Christmas', 'sleeps until Christmas'], eve: 'Christmas Eve', merry: 'Merry Christmas', second: 'Boxing Day', ny: ['day until New Year', 'days until New Year'], happy: 'Happy New Year' },
+    nl: { title: 'Aftellen naar Kerst', pre: ['nog', 'nog'], days: ['dag tot Kerst', 'dagen tot Kerst'], sleeps: ['nachtje slapen', 'nachtjes slapen'], eve: 'Kerstavond', merry: 'Vrolijk kerstfeest', second: 'Tweede kerstdag', ny: ['dag tot Nieuwjaar', 'dagen tot Nieuwjaar'], happy: 'Gelukkig nieuwjaar' },
+    de: { title: 'Weihnachts-Countdown', pre: ['noch', 'noch'], days: ['Tag bis Weihnachten', 'Tage bis Weihnachten'], sleeps: ['Mal schlafen', 'Mal schlafen'], eve: 'Heiligabend', merry: 'Frohe Weihnachten', second: 'Zweiter Weihnachtstag', ny: ['Tag bis Neujahr', 'Tage bis Neujahr'], happy: 'Frohes neues Jahr' },
+    fr: { title: 'Compte à rebours de Noël', pre: ['encore', 'encore'], days: ['jour avant Noël', 'jours avant Noël'], sleeps: ['dodo avant Noël', 'dodos avant Noël'], eve: 'Réveillon de Noël', merry: 'Joyeux Noël', second: 'Joyeuses fêtes', ny: ['jour avant le Nouvel An', 'jours avant le Nouvel An'], happy: 'Bonne année' },
+    es: { title: 'Cuenta atrás para Navidad', pre: ['falta', 'faltan'], days: ['día para Navidad', 'días para Navidad'], sleeps: ['noche para Navidad', 'noches para Navidad'], eve: 'Nochebuena', merry: 'Feliz Navidad', second: 'Felices fiestas', ny: ['día para Año Nuevo', 'días para Año Nuevo'], happy: 'Feliz Año Nuevo' },
+    it: { title: 'Conto alla rovescia per Natale', pre: ['manca', 'mancano'], days: ['giorno a Natale', 'giorni a Natale'], sleeps: ['notte a Natale', 'notti a Natale'], eve: 'Vigilia di Natale', merry: 'Buon Natale', second: 'Santo Stefano', ny: ['giorno a Capodanno', 'giorni a Capodanno'], happy: 'Felice anno nuovo' },
+    pt: { title: 'Contagem para o Natal', pre: ['falta', 'faltam'], days: ['dia para o Natal', 'dias para o Natal'], sleeps: ['noite para o Natal', 'noites para o Natal'], eve: 'Véspera de Natal', merry: 'Feliz Natal', second: 'Boas festas', ny: ['dia para o Ano Novo', 'dias para o Ano Novo'], happy: 'Feliz Ano Novo' },
+    sv: { title: 'Nedräkning till jul', pre: ['', ''], days: ['dag kvar till jul', 'dagar kvar till jul'], sleeps: ['natt kvar till jul', 'nätter kvar till jul'], eve: 'Julafton', merry: 'God jul', second: 'Annandag jul', ny: ['dag kvar till nyår', 'dagar kvar till nyår'], happy: 'Gott nytt år' },
+    da: { title: 'Nedtælling til jul', pre: ['', ''], days: ['dag til jul', 'dage til jul'], sleeps: ['nat til jul', 'nætter til jul'], eve: 'Juleaften', merry: 'Glædelig jul', second: '2. juledag', ny: ['dag til nytår', 'dage til nytår'], happy: 'Godt nytår' },
+    nb: { title: 'Nedtelling til jul', pre: ['', ''], days: ['dag til jul', 'dager til jul'], sleeps: ['natt til jul', 'netter til jul'], eve: 'Julaften', merry: 'God jul', second: '2. juledag', ny: ['dag til nyttår', 'dager til nyttår'], happy: 'Godt nyttår' },
+    pl: { title: 'Odliczanie do Świąt', pre: ['jeszcze', 'jeszcze', 'jeszcze'], days: ['dzień do Świąt', 'dni do Świąt', 'dni do Świąt'], sleeps: ['noc do Świąt', 'noce do Świąt', 'nocy do Świąt'], eve: 'Wigilia', merry: 'Wesołych Świąt', second: 'Drugi dzień Świąt', ny: ['dzień do Nowego Roku', 'dni do Nowego Roku', 'dni do Nowego Roku'], happy: 'Szczęśliwego Nowego Roku' },
+    fi: { title: 'Joulun lähtölaskenta', pre: ['', ''], days: ['päivä jouluun', 'päivää jouluun'], sleeps: ['yö jouluun', 'yötä jouluun'], eve: 'Jouluaatto', merry: 'Hyvää joulua', second: 'Tapaninpäivä', ny: ['päivä uuteen vuoteen', 'päivää uuteen vuoteen'], happy: 'Hyvää uutta vuotta' }
+  };
+  var NAMES = { english: 'en', nederlands: 'nl', dutch: 'nl', deutsch: 'de', german: 'de', francais: 'fr', french: 'fr', espanol: 'es', spanish: 'es', italiano: 'it', portugues: 'pt', svenska: 'sv', dansk: 'da', norsk: 'nb', no: 'nb', nn: 'nb', polski: 'pl', suomi: 'fi' };
+
+  function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim(); }
+  function pickLang(setting, locale) {
+    var s = norm(setting);
+    if (!s || s === 'auto') s = norm(locale).slice(0, 2);
+    s = NAMES[s] || s;
+    return T[s] ? s : 'en';
+  }
+  function plural(lang, n, forms) {
+    if (lang === 'pl') {
+      if (n === 1) return forms[0];
+      var d = n % 10, h = n % 100;
+      return (d >= 2 && d <= 4 && (h < 12 || h > 14)) ? forms[1] : forms[2];
+    }
+    return n === 1 ? forms[0] : forms[1];
+  }
+
+  // ---------------------------------------------------------------- dates
+  var DAY = 86400000;
+  function localToday(el) {
+    var t = (el.dataset.test || '').trim();
+    var m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m) return Date.UTC(+m[1], +m[2] - 1, +m[3]);
+    var ts = parseInt(el.dataset.ts, 10);
+    var ms = isNaN(ts) ? Date.now() : ts * 1000;
+    var off = parseInt(el.dataset.offset, 10) || 0;
+    var d = new Date(ms + off * 1000);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+  function phaseFor(today) {
+    var d = new Date(today), y = d.getUTCFullYear(), mo = d.getUTCMonth(), day = d.getUTCDate();
+    var xmas = Date.UTC(mo === 11 && day > 26 ? y + 1 : y, 11, 25);
+    var p = { today: today, year: y, month: mo, date: day, days: Math.round((xmas - today) / DAY), dayNo: Math.floor(today / DAY) };
+    if (mo === 11 && day === 25) p.phase = 'xmas';
+    else if (mo === 11 && day === 26) p.phase = 'second';
+    else if (mo === 11 && day > 26) { p.phase = 'nycount'; p.nyDays = 32 - day; }
+    else if (mo === 0 && day === 1) p.phase = 'newyear';
+    else if (p.days <= 24) p.phase = 'advent';
+    else p.phase = 'season';
+    // How wintery it is: ramps up towards Christmas, fades out in early spring.
+    var ramp = Math.max(0, Math.min(1, (90 - p.days) / 75));
+    var winter = mo === 0 ? 0.85 : mo === 1 ? 0.6 : mo === 2 ? 0.25 : 0;
+    p.snow = (p.phase === 'season' || p.phase === 'advent') ? Math.max(ramp, winter) : 1;
+    return p;
+  }
+
+  // ---------------------------------------------------------------- random
+  function rngFor(seed) {
+    var a = (seed * 2654435761) >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function ri(r, a, b) { return a + Math.floor(r() * (b - a + 1)); }
+  function pick(r, arr) { return arr[Math.floor(r() * arr.length)]; }
+  function shuffle(r, arr) {
+    for (var i = arr.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)), t = arr[i]; arr[i] = arr[j]; arr[j] = t; }
+    return arr;
+  }
+
+  // ---------------------------------------------------------------- canvas
+  // Every cell holds an ink density (0 = paper, 1 = darkest). On output the
+  // density becomes a dot from RAMP, with ordered dithering for smooth fades.
+  // A cell can also hold a fixed glyph (ornaments, stars) instead.
+  var RAMP = [' ', '·', '•', '●'];
+  var ASP = 1; // cell width / cell height, measured per render
+  var MONO = false; // black and white only: draw ornaments as paper circles
+  var BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+  var COLOR = {
+    red: 'text--red-40', green: 'text--green-25', pine: 'text--green-15', gold: 'text--orange-45', yellow: 'text--yellow-30',
+    blue: 'text--blue-40', pink: 'text--pink-40', purple: 'text--purple-40', brown: 'text--orange-20', orange: 'text--orange-40',
+    sky: 'text--blue-30', milky: 'text--purple-35', snow: 'text--blue-55', hill: 'text--blue-45', far: 'text--blue-60', ice: 'text--cyan-45', stone: 'text--gray-30'
+  };
+  function Canvas(w, h) {
+    this.w = w; this.h = h; this.d = []; this.g = []; this.k = [];
+    for (var i = 0; i < w * h; i++) { this.d.push(0); this.g.push(null); this.k.push(''); }
+  }
+  Canvas.prototype.ok = function (x, y) { return x >= 0 && y >= 0 && x < this.w && y < this.h; };
+  Canvas.prototype.set = function (x, y, d, col) {
+    x = Math.round(x); y = Math.round(y);
+    if (!this.ok(x, y)) return;
+    var i = y * this.w + x; this.d[i] = d; this.g[i] = null; this.k[i] = col || '';
+  };
+  // Only darkens, so soft things (halo, snow) never punch holes in solid shapes.
+  Canvas.prototype.ink = function (x, y, d, col) {
+    x = Math.round(x); y = Math.round(y);
+    if (!this.ok(x, y)) return;
+    var i = y * this.w + x;
+    if (d > this.d[i] && !this.g[i]) { this.d[i] = d; this.k[i] = col || ''; }
+  };
+  Canvas.prototype.glyph = function (x, y, ch, col) {
+    x = Math.round(x); y = Math.round(y);
+    if (!this.ok(x, y)) return;
+    var i = y * this.w + x; this.g[i] = ch; this.d[i] = 1; this.k[i] = col || '';
+  };
+  Canvas.prototype.dens = function (x, y) { return this.ok(x, y) ? this.d[y * this.w + x] : 0; };
+  Canvas.prototype.html = function (useColor) {
+    var out = [];
+    for (var y = 0; y < this.h; y++) {
+      var run = '', cur = null;
+      for (var x = 0; x < this.w; x++) {
+        var i = y * this.w + x, ch = this.g[i];
+        if (!ch) { var hsh = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453; ch = RAMP[Math.max(0, Math.min(3, Math.floor(this.d[i] * 3 + (this.d[i] > 0.7 ? BAYER[(y & 3) * 4 + (x & 3)] / 16 : hsh - Math.floor(hsh)))))]; }
+        var k = useColor && ch !== ' ' ? COLOR[this.k[i]] || '' : (cur || '');
+        if (k !== cur) { if (run) out.push(cur ? '<span class="' + cur + '">' + run + '</span>' : run); run = ''; cur = k; }
+        run += ch;
+      }
+      if (run) out.push(cur ? '<span class="' + cur + '">' + run + '</span>' : run);
+      out.push('\n');
+    }
+    return out.join('');
+  };
+
+  // ---------------------------------------------------------------- noise
+  function noise1(seed) {
+    var r = rngFor(seed), v = [];
+    for (var i = 0; i < 512; i++) v.push(r());
+    return function (x) {
+      var i = Math.floor(x), f = x - i, a = v[((i % 512) + 512) % 512], b = v[(((i + 1) % 512) + 512) % 512];
+      f = f * f * (3 - 2 * f);
+      return a + (b - a) * f;
+    };
+  }
+  function noise2(seed) {
+    var n = noise1(seed);
+    return function (x, y) {
+      var j = Math.floor(y), f = y - j; f = f * f * (3 - 2 * f);
+      var a = n(x + j * 37.13), b = n(x + (j + 1) * 37.13);
+      return a + (b - a) * f;
+    };
+  }
+
+  // ---------------------------------------------------------------- drawing helpers
+  // Fills an ellipse (radii in rows). f(ex, ey, dist, x, y) returns [density, color] or null.
+  function blob(c, cx, cy, rx, ry, f) {
+    for (var dy = -Math.ceil(ry); dy <= Math.ceil(ry); dy++) for (var dx = -Math.ceil(rx / ASP); dx <= Math.ceil(rx / ASP); dx++) {
+      var ex = dx * ASP / rx, ey = dy / ry, dd = ex * ex + ey * ey;
+      if (dd > 1) continue;
+      var v = f(ex, ey, Math.sqrt(dd), Math.round(cx) + dx, Math.round(cy) + dy);
+      if (v) c.set(Math.round(cx) + dx, Math.round(cy) + dy, v[0], v[1]);
+    }
+  }
+  // A round-ended stroke between two cells, w thick (in rows).
+  function stroke(c, x0, y0, x1, y1, w, d, col) {
+    var steps = Math.max(1, Math.ceil(Math.max(Math.abs(x1 - x0) * ASP, Math.abs(y1 - y0)) * 2)), r = w / 2;
+    for (var i = 0; i <= steps; i++) {
+      var t = i / steps, x = Math.round(x0 + (x1 - x0) * t), y = Math.round(y0 + (y1 - y0) * t);
+      for (var dy = -Math.ceil(r); dy <= Math.ceil(r); dy++) for (var dx = -Math.ceil(r / ASP); dx <= Math.ceil(r / ASP); dx++)
+        if (Math.pow(dx * ASP, 2) + dy * dy <= r * r + 0.25) c.set(x + dx, y + dy, d, col);
+    }
+  }
+  function path(c, pts, w, d, col) { for (var i = 1; i < pts.length; i++) stroke(c, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], w, d, col); }
+
+  // ---------------------------------------------------------------- shapes
+  function sky(ctx, o) {
+    var c = ctx.c, r = ctx.r, n = noise2(ctx.seed + 11), horizon = ctx.far;
+    // Milky way: a soft diagonal band, its angle changes per day.
+    if (o.milky !== false) {
+      var y0 = horizon * (0.1 + r() * 0.45), y1 = horizon * (0.05 + r() * 0.5), wd = Math.max(1.5, c.h * 0.07);
+      for (var y = 0; y < horizon; y++) for (var x = 0; x < c.w; x++) {
+        var ly = y0 + (y1 - y0) * x / c.w + (n(x * 0.05, 3) - 0.5) * wd * 2, dist = (y - ly) / wd;
+        var nz = n(x * 0.18, y * 0.2) * 0.6 + n(x * 0.5, y * 0.5) * 0.4;
+        var dd = Math.exp(-dist * dist) * Math.pow(nz, 1.8) * 0.7 * (o.milky || 1);
+        if (dd > 0.06) c.ink(x, y, dd, 'milky');
+      }
+    }
+    for (y = 0; y < horizon; y++) for (x = 0; x < c.w; x++) {
+      var q = r();
+      if (q < 0.0016) c.glyph(x, y, q < 0.0005 ? '+' : '•', 'gold');
+      else if (q < 0.009) c.ink(x, y, 0.34, 'sky');
+    }
+    var big = Math.round(c.w * horizon / 2500) + 2;
+    for (var b = 0; b < big; b++) {
+      var sx = ri(r, 0, c.w - 1), sy = ri(r, 0, Math.max(1, horizon - 4));
+      c.glyph(sx, sy, '+', 'gold');
+      c.ink(sx - Math.round(1 / ASP), sy, 0.4, 'gold'); c.ink(sx + Math.round(1 / ASP), sy, 0.4, 'gold');
+      c.ink(sx, sy - 1, 0.4, 'gold'); c.ink(sx, sy + 1, 0.4, 'gold');
+      c.ink(sx - Math.round(2 / ASP), sy, 0.2, 'gold'); c.ink(sx + Math.round(2 / ASP), sy, 0.2, 'gold');
+    }
+    if (o.moon !== false) moon(ctx);
+  }
+  function moon(ctx) {
+    var c = ctx.c, r = ctx.r, R = Math.max(2, Math.min(14, Math.round(c.h * 0.075)));
+    var g = ctx.region, cx = g.x0 + R * 3 + r() * Math.max(1, g.x1 - g.x0 - R * 6), cy = R + 1 + r() * Math.max(0, ctx.far * 0.35 - R);
+    if (ctx.cardBox && cx - R * 2 < ctx.cardBox.x1 + 2 && cy - R < ctx.cardBox.y1 + 1) cx = Math.min(c.w - R * 2, ctx.cardBox.x1 + R * 3);
+    var phase = 0.35 + r() * 0.3, craters = noise2(ctx.seed + 77);
+    for (var y = -R * 2; y <= R * 2; y++) for (var x = -R * 4; x <= R * 4; x++) {
+      var dx = x * ASP / R, dy = y / R, dd = Math.sqrt(dx * dx + dy * dy);
+      if (dd <= 1) {
+        var ex = dx + phase, inside = Math.sqrt(ex * ex + dy * dy) < 0.95;
+        var crater = craters(x * 0.5, y * 0.5) > 0.66 ? 0.55 : dd > 0.9 ? 0.75 : 0.95;
+        c.set(cx + x, cy + y, inside ? 0 : crater, inside ? '' : 'gold');
+      } else if (dd < 1.9) c.ink(cx + x, cy + y, 0.28 * (1.9 - dd), 'gold');
+    }
+    ctx.moonX = cx; ctx.moonY = cy;
+  }
+  // A hill layer: fills everything below a rolling line. Returns the surface.
+  function hills(ctx, base, amp, scale, d, col, contour) {
+    var c = ctx.c, n = noise1(ctx.seed + Math.round(base * 7)), nd = noise2(ctx.seed + Math.round(base * 3)), surf = [];
+    for (var x = 0; x < c.w; x++) {
+      var s = Math.round(base + (n(x / scale) - 0.5) * 2 * amp);
+      surf.push(s);
+      for (var y = s; y < c.h; y++) {
+        var drift = (nd(x * 0.08, y * 0.18) - 0.5) * 0.18;
+        c.set(x, y, y === s && contour ? contour : Math.max(0, d * (0.85 + 0.3 * (y - s) / (c.h - s + 1)) + drift), col);
+      }
+    }
+    return surf;
+  }
+  function landscape(ctx) {
+    var c = ctx.c, snowy = ctx.p.snow > 0.35, h = c.h;
+    ctx.surfFar = hills(ctx, ctx.far, h * 0.05, 9, snowy ? 0.2 : 0.16, snowy ? 'far' : 'green', snowy ? 0.45 : 0.4);
+    // A far-off village: a few warm lights on the distant hills.
+    var vx = ri(ctx.r, 0, c.w - 1), lights = ri(ctx.r, 3, 9);
+    for (var l = 0; l < lights; l++) { var lx = vx + ri(ctx.r, -12, 12); c.glyph(lx, at(ctx.surfFar, lx) + ri(ctx.r, 1, 2), '·', 'gold'); }
+    ctx.layerMid = function () { ctx.surfMid = hills(ctx, ctx.mid, h * 0.04, 13, snowy ? 0.1 : 0.26, snowy ? 'hill' : 'green', snowy ? 0.5 : 0.5); };
+    ctx.layerNear = function () { ctx.surf = hills(ctx, ctx.gy, h * 0.03, 17, snowy ? 0.04 : 0.36, snowy ? 'snow' : 'brown', snowy ? 0.55 : 0.6); };
+  }
+  // A layered pine. h is the height in rows including the trunk. Tiers get a
+  // ragged edge, needle texture, drooping branch lines and snow on top.
+  function pine(c, cx, base, h, d, col, snowy, spots) {
+    var nz = noise2(cx * 131 + base * 7 + h);
+    var tiers = Math.max(1, Math.min(7, Math.round(h / 7))), foliage = Math.max(2, h - Math.max(1, Math.round(h * 0.1)));
+    var top = base - h + 1, maxHW = h * 0.3 / ASP, th = foliage / tiers;
+    for (var t = 0; t < foliage; t++) {
+      var i = Math.min(tiers - 1, Math.floor(t / th)), lt = t - i * th, u = lt / th;
+      var from = maxHW * (i / tiers) * 0.45 + 0.5, to = maxHW * (i + 1) / tiers, hw = from + (to - from) * Math.pow(u, 0.8);
+      var hwj = hw + (nz(t * 0.9, 5) - 0.5) * Math.min(2.2, hw * 0.3);
+      for (var x = -Math.ceil(hwj); x <= Math.ceil(hwj); x++) {
+        var ax = Math.abs(x);
+        if (ax > hwj) continue;
+        var y = top + t, edge = ax > hwj - 1;
+        var tex = 0.9 + 0.2 * nz(x * 0.8 + 40, t * 0.8);
+        var branch = ((lt - ax * ASP * 0.45) % 3 + 3) % 3 < 1 ? 1.08 : 0.93;
+        var dd = Math.min(1, d * tex * branch * (edge ? 0.62 : 1));
+        if (snowy && ax > hw * 0.28 && (u < 0.05 + 0.1 * nz(x * 0.5, i * 3) || (branch > 1 && nz(x * 0.9, t * 0.9) > 0.86))) dd = 0.07;
+        c.set(cx + x, y, dd, dd < 0.2 ? 'snow' : col);
+        if (spots && !edge && t > 1 && t < foliage - 1 && ax < hw - 1.5) spots.push([cx + x, y, i, u]);
+      }
+    }
+    var tw = Math.max(0, Math.round(h * 0.035 / ASP));
+    for (var y2 = top + foliage; y2 <= base; y2++) for (var w = -tw; w <= tw; w++) c.set(cx + w, y2, d * (0.8 + 0.2 * nz(w * 3, y2)), 'brown');
+    return { top: top, hw: maxHW, th: th, tiers: tiers, foliage: foliage };
+  }
+  // A Christmas bauble: a solid ball with a paper ring around it and a highlight.
+  function bauble(c, x, y, R, col) {
+    var rx = Math.ceil((R + 1) / ASP);
+    for (var dy = -Math.ceil(R + 1); dy <= Math.ceil(R + 1); dy++) for (var dx = -rx; dx <= rx; dx++) {
+      var dd = Math.sqrt(Math.pow(dx * ASP, 2) + dy * dy);
+      if (dd <= R) c.set(x + dx, y + dy, MONO ? 0 : 1, MONO ? '' : col);
+      else if (dd <= R + 0.9) c.set(x + dx, y + dy, MONO ? 1 : 0, MONO ? 'pine' : '');
+    }
+    if (R >= 1.5) c.set(x - Math.round(R * 0.4 / ASP), y - Math.round(R * 0.4), 0.12, '');
+  }
+  // One bulb of a light string: a glowing dot with a paper halo.
+  function bulb(c, x, y, col) { c.set(x - 1, y, 0, ''); c.set(x + 1, y, 0, ''); c.glyph(x, y, '•', col); }
+  function forestRow(ctx, surf, n, minH, maxH, d, col, avoid) {
+    var c = ctx.c, r = ctx.r, snowy = ctx.p.snow > 0.5, placed = 0;
+    for (var tries = 0; tries < n * 4 && placed < n; tries++) {
+      var x = ri(r, 0, c.w - 1), h = ri(r, minH, Math.max(minH, maxH)), bad = false;
+      for (var a = 0; a < (avoid || []).length; a++) if (x + h * 0.3 / ASP >= avoid[a][0] && x - h * 0.3 / ASP <= avoid[a][1]) bad = true;
+      if (bad) continue;
+      pine(c, x, surf[Math.max(0, Math.min(c.w - 1, x))], h, d, col, snowy);
+      placed++;
+    }
+  }
+  function snowfall(ctx) {
+    var c = ctx.c, r = ctx.r, a = ctx.p.snow;
+    if (a < 0.15) return;
+    for (var y = 0; y < c.h; y++) for (var x = 0; x < c.w; x++) {
+      if (r() > a * 0.006) continue;
+      var dd = c.dens(x, y);
+      if (dd > 0.6) c.set(x, y, 0, '');           // a flake in front of a dark shape
+      else if (dd < 0.15) c.glyph(x, y, r() < 0.7 ? '·' : '•', 'snow');
+    }
+  }
+  function smoke(c, r, x, y, len) {
+    for (var i = 0; i < len; i++) { x += Math.sin(i * 0.7) * 0.8 + 0.4; c.ink(x, y - i, 0.45 - i * 0.03, 'sky'); }
+  }
+  function star(c, x, y, rays, col) {
+    c.glyph(x, y, '*', col);
+    for (var i = 1; i <= rays; i++) {
+      var sx = Math.round(i / ASP); c.ink(x - sx, y, 0.6 - i * 0.1, col); c.ink(x + sx, y, 0.6 - i * 0.1, col);
+      c.ink(x, y - i, 0.6 - i * 0.1, col); c.ink(x, y + i, 0.6 - i * 0.1, col);
+    }
+  }
+  // A firework: a rising trail from the ground, then one of four burst types.
+  // Particles droop under gravity; the inner ring can have a second colour.
+  var FW_COLS = ['red', 'gold', 'blue', 'pink', 'purple', 'orange', 'green'];
+  function firework(c, r, x, y, R, groundY) {
+    var col = pick(r, FW_COLS), col2 = pick(r, FW_COLS), type = Math.floor(r() * 4), drift = (r() - 0.5) * R * 0.8 / ASP;
+    for (var ty = groundY; ty > y + R * 0.3; ty -= 2) {
+      var u = (groundY - ty) / (groundY - y);
+      c.ink(x + drift * (1 - u) + Math.sin(ty * 0.7) * 0.6, ty, 0.2 + 0.25 * u, 'gold');
+    }
+    var rays = 18 + Math.floor(r() * 10), droop = type === 2 ? 0.9 : 0.25;
+    if (type === 1) {
+      // Ring: a crisp circle of sparks with a smaller ring inside.
+      for (var k = 0; k < rays * 2; k++) {
+        var a = k / (rays * 2) * 6.283;
+        c.glyph(x + Math.cos(a) * R / ASP, y + Math.sin(a) * R * 0.9, '•', col);
+        if (k % 2 === 0) c.glyph(x + Math.cos(a) * R * 0.5 / ASP, y + Math.sin(a) * R * 0.45, '·', col2);
+      }
+    } else if (type === 3) {
+      // Glitter: a soft cloud of sparkles, denser towards the middle.
+      for (var g = 0; g < R * R * 3; g++) {
+        var ga = r() * 6.283, gd = Math.sqrt(r()) * R;
+        c.glyph(x + Math.cos(ga) * gd / ASP, y + Math.sin(ga) * gd + (gd / R) * (gd / R) * R * 0.2, r() < 0.25 ? '•' : '·', r() < 0.5 ? col : col2);
+      }
+    } else {
+      // Peony (round) or willow (long drooping trails).
+      for (k = 0; k < rays; k++) {
+        a = k / rays * 6.283 + r() * 0.15;
+        var len = R * (0.85 + r() * 0.3);
+        for (var t = R * 0.2; t < len; t += 0.5) {
+          var f = t / len, px = x + Math.cos(a) * t / ASP, py = y + Math.sin(a) * t * 0.9 + f * f * R * droop;
+          c.ink(px, py, (type === 2 ? 0.3 : 0.22) + 0.5 * f, f < 0.45 ? col2 : col);
+        }
+        c.glyph(x + Math.cos(a) * len / ASP, y + Math.sin(a) * len * 0.9 + R * droop, type === 2 ? '·' : '•', col);
+        if (type === 2) for (var tr = 1; tr < R * 0.5; tr += 1.5) c.glyph(x + Math.cos(a) * len / ASP, y + Math.sin(a) * len * 0.9 + R * droop + tr, '·', col);
+      }
+    }
+    c.glyph(x, y, '*', col2);
+    for (var hx = -1; hx <= 1; hx++) for (var hy = -1; hy <= 1; hy++) if (hx || hy) c.ink(x + hx, y + hy, 0.5, col2);
+  }
+  // A wrapped present: patterned paper, a lid, a paper ribbon and a two-loop bow.
+  function gift(c, x, yBottom, w, h, col, style) {
+    var lid = Math.max(1, Math.round(h * 0.22)), mx = x + Math.floor(w / 2), my = yBottom - Math.floor((h - lid) / 2);
+    for (var y = yBottom - h + 1; y <= yBottom; y++) for (var i = -1; i <= w; i++) {
+      var isLid = y < yBottom - h + 1 + lid, px = x + i;
+      if (!isLid && (i < 0 || i >= w)) continue;
+      var edge = i <= (isLid ? -1 : 0) || i >= (isLid ? w : w - 1) || y === yBottom || y === yBottom - h + 1;
+      var pat = style === 1 ? ((px + y) % 4 === 0) : style === 2 ? (px % 3 === 0 && y % 2 === 0) : false;
+      c.set(px, y, edge || isLid ? 1 : pat ? 0.3 : tex(0.85, px, y, i / w), col);
+    }
+    var rw = Math.max(0, Math.round(w * 0.06));
+    for (y = yBottom - h + 1; y <= yBottom; y++) for (i = -rw; i <= rw; i++) c.set(mx + i, y, 0.05, 'gold');
+    for (i = 0; i < w; i++) c.set(x + i, my, 0.05, 'gold');
+    // Bow: two loops and a knot, sitting on the lid.
+    var lr = Math.max(0.8, h * 0.2), by = yBottom - h - Math.round(lr * 0.6);
+    var loop = function (ex, ey, dd) { return dd > 0.55 ? [1, 'gold'] : [0, '']; };
+    blob(c, mx - Math.round(lr / ASP * 0.9), by, lr, lr * 0.7, loop);
+    blob(c, mx + Math.round(lr / ASP * 0.9), by, lr, lr * 0.7, loop);
+    c.set(mx, by + 1, 1, 'gold');
+  }
+  // A reindeer standing (or flying, legs stretched) with its head towards dir (-1 left, 1 right).
+  // h is roughly the height from hooves to antler tips, in rows. o.nose gives a red nose.
+  function drawReindeer(c, x, base, h, dir, o) {
+    o = o || {};
+    var X = function (u) { return x + dir * u * h / ASP; }, Y = function (v) { return base - v * h; };
+    var legH = 0.27, bry = 0.15, brx = 0.3, bcy = legH + bry * 0.8, hu = 0.38, hv = bcy + bry + 0.11;
+    var fur = function (dk, ry) {
+      return function (ex, ey, dd, px, py) {
+        if (dd > 1 - Math.max(0.1, 0.9 / (h * ry))) return [0.95, 'brown'];
+        if (ey > 0.45) return [tex(0.4 * dk, px, py, 0.5), 'brown'];
+        return [tex(0.74 * dk, px, py, (dir * ex + 1) / 2), 'brown'];
+      };
+    };
+    var legs = function (far) {
+      var d = far ? 0.55 : 0.95, off = far ? 0.07 : 0, sw = o.fly ? 0.12 : 0;
+      [[0.19 + off, 1], [-0.19 + off, -1]].forEach(function (L) {
+        var hip = [X(L[0]), Y(bcy - bry * 0.1)], knee = [X(L[0] + (L[1] < 0 ? -0.04 : 0.015) + L[1] * sw * 0.5), Y(legH * 0.48 + (o.fly ? 0.05 : 0))];
+        var hoof = [X(L[0] + L[1] * sw), Y(o.fly ? 0.1 : 0.03)];
+        stroke(c, hip[0], hip[1], knee[0], knee[1], h * 0.085, d, 'brown');
+        stroke(c, knee[0], knee[1], hoof[0], hoof[1], h * 0.05, d, 'brown');
+        stroke(c, hoof[0], hoof[1] + 1, hoof[0] + dir * h * 0.025 / ASP, hoof[1] + 1, h * 0.05, 1, 'pine');
+      });
+    };
+    var antler = function (shift, d) {
+      var bx = X(hu - 0.02 - shift), by = Y(hv + 0.05), P = function (u, v) { return [bx + dir * u * h / ASP, by - v * h]; };
+      var w = Math.max(0.7, h * 0.028);
+      path(c, [P(0, 0), P(-0.06, 0.1), P(-0.05, 0.22), P(0.02, 0.32)], w, d, 'brown');
+      path(c, [P(-0.06, 0.1), P(0.02, 0.15)], w, d, 'brown');
+      path(c, [P(-0.055, 0.17), P(-0.12, 0.22)], w, d, 'brown');
+      path(c, [P(-0.05, 0.22), P(0.05, 0.26)], w, d, 'brown');
+      path(c, [P(-0.03, 0.27), P(-0.09, 0.33)], w, d, 'brown');
+    };
+    legs(true);
+    antler(0.05, 0.6);
+    // Tail, body, neck with a light mane underneath, head and snout.
+    blob(c, X(-brx - 0.01), Y(bcy + bry * 0.5), h * 0.04, h * 0.045, function (ex, ey, dd) { return dd > 0.6 ? [0.9, 'brown'] : [0.1, 'snow']; });
+    blob(c, X(0), Y(bcy), h * brx, h * bry, fur(1, bry));
+    stroke(c, X(0.2), Y(bcy + bry * 0.35), X(hu - 0.02), Y(hv - 0.02), h * 0.14, 0.95, 'brown');
+    stroke(c, X(0.205), Y(bcy + bry * 0.35), X(hu - 0.02), Y(hv - 0.02), h * 0.09, 0.7, 'brown');
+    stroke(c, X(0.25), Y(bcy + bry * 0.1), X(hu + 0.01), Y(hv - 0.06), h * 0.04, 0.28, 'brown');
+    legs(false);
+    blob(c, X(hu), Y(hv), h * 0.095, h * 0.072, fur(1.05, 0.072));
+    blob(c, X(hu + 0.08), Y(hv - 0.02), h * 0.06, h * 0.045, function (ex, ey, dd, px, py) { return dd > 0.7 ? [0.95, 'brown'] : [tex(0.5, px, py, 0.5), 'brown']; });
+    var nr = Math.max(0.7, h * 0.028);
+    blob(c, X(hu + 0.135), Y(hv - 0.015), nr, nr, function () { return [1, o.nose ? 'red' : 'pine']; });
+    c.set(X(hu + 0.01), Y(hv + 0.02), 1, 'pine'); c.set(X(hu + 0.01) - dir, Y(hv + 0.02) - 1, 0, '');
+    stroke(c, X(hu - 0.05), Y(hv + 0.04), X(hu - 0.12), Y(hv + 0.08), Math.max(0.7, h * 0.035), 0.95, 'brown');
+    antler(0, 0.95);
+    // Collar with a bell.
+    stroke(c, X(0.24), Y(bcy + bry + 0.0), X(0.31), Y(bcy + bry + 0.05), Math.max(0.7, h * 0.04), 1, 'red');
+    blob(c, X(0.29), Y(bcy + bry - 0.035), Math.max(0.7, h * 0.03), Math.max(0.7, h * 0.03), function () { return [1, 'gold']; });
+    var a = X(-brx - 0.06), b = X(hu + 0.17);
+    return { x0: Math.round(Math.min(a, b)), x1: Math.round(Math.max(a, b)) };
+  }
+  function reindeerW(h) { return Math.round(h * 0.75 / ASP); }
+  // Santa's sleigh flying with two reindeer in front, nose first towards dir.
+  function sleigh(c, x, y, h, dir) {
+    var X = function (u) { return x + dir * u * h / ASP; }, Y = function (v) { return y - v * h; };
+    // Runner with a curl at the front, and the sleigh body with gold trim.
+    path(c, [[X(-0.45), Y(0)], [X(0.45), Y(0)], [X(0.55), Y(0.12)], [X(0.5), Y(0.2)]], Math.max(0.6, h * 0.04), 1, 'gold');
+    stroke(c, X(-0.3), Y(0), X(-0.3), Y(0.12), Math.max(0.6, h * 0.03), 1, 'gold');
+    stroke(c, X(0.25), Y(0), X(0.25), Y(0.12), Math.max(0.6, h * 0.03), 1, 'gold');
+    for (var v = 0.12; v <= 0.42; v += 1 / h) {
+      var back = -0.48 - (v > 0.3 ? (v - 0.3) * 0.6 : 0), front = 0.38 - Math.max(0, v - 0.25) * 0.8;
+      for (var u = back; u <= front; u += ASP / h) {
+        var edge = u - back < ASP / h * 1.5 || front - u < ASP / h * 1.5 || v < 0.12 + 1.5 / h;
+        c.set(X(u), Y(v), edge ? 1 : tex(0.85, Math.round(X(u)), Math.round(Y(v)), 0.5), edge ? 'gold' : 'red');
+      }
+    }
+    // Santa: red coat, white beard and trim, hat with a pompom; a sack behind him.
+    blob(c, X(-0.32), Y(0.55), h * 0.17, h * 0.17, function (ex, ey, dd) { return dd > 0.82 ? [0.95, 'brown'] : [0.55, 'brown']; });
+    blob(c, X(-0.08), Y(0.55), h * 0.14, h * 0.16, function (ex, ey, dd) { return dd > 0.8 ? [1, 'red'] : [0.88, 'red']; });
+    blob(c, X(0.0), Y(0.78), h * 0.075, h * 0.075, function (ex, ey, dd) { return ey > 0.1 ? [0.04, 'snow'] : dd > 0.8 ? [0.9, 'stone'] : [0.18, 'orange']; });
+    path(c, [[X(-0.06), Y(0.84)], [X(0.0), Y(0.98)], [X(-0.12), Y(0.94)]], Math.max(0.6, h * 0.07), 1, 'red');
+    blob(c, X(-0.13), Y(0.93), Math.max(0.6, h * 0.04), Math.max(0.6, h * 0.04), function () { return [0.05, 'snow']; });
+    // Two reindeer pulling, with dotted reins.
+    var dh = h * 0.95;
+    for (var k = 0; k < 2; k++) {
+      var rx = X(0.95 + k * 0.75);
+      drawReindeer(c, rx, Y(0.1 + k * 0.08), dh, dir, { fly: true, nose: k === 1 });
+      for (var t = 0; t <= 1; t += 0.08) c.glyph(X(0.45 + k * 0.75) + (rx - X(0.45 + k * 0.75)) * t, Y(0.35 + k * 0.08 + Math.sin(t * 3.14) * 0.05), '·', 'gold');
+    }
+  }
+  // A snowman built from three shaded snowballs, lit from the top left.
+  function snowman(ctx, cx, base, h) {
+    var c = ctx.c, sizes = [h * 0.4, h * 0.3, h * 0.22], balls = [], y = base;
+    function disc(x, yy, R, d, col) {
+      for (var dy = -Math.ceil(R); dy <= Math.ceil(R); dy++) for (var dx = -Math.ceil(R / ASP); dx <= Math.ceil(R / ASP); dx++)
+        if (Math.pow(dx * ASP, 2) + dy * dy <= R * R) c.set(x + dx, yy + dy, d, col);
+    }
+    function twig(x, yy, dir, len, ang) {
+      for (var i = 0; i < len; i++) {
+        var px = x + dir * i / ASP * Math.cos(ang), py = yy - i * Math.sin(ang);
+        c.set(px, py, 1, 'brown');
+        if (i < len * 0.3) c.set(px, py + 1, 0.9, 'brown');
+        if (i === Math.round(len * 0.6)) for (var j = 1; j < len * 0.3; j++) c.set(px + dir * j / ASP * 0.5, py - j, 1, 'brown');
+        if (i === len - 1) for (j = 1; j < len * 0.2; j++) { c.set(px + dir * j / ASP, py - j * 0.2, 1, 'brown'); c.set(px + dir * j / ASP * 0.4, py + j * 0.7, 1, 'brown'); }
+      }
+    }
+    // Shadow on the snow under the snowman.
+    var sR = sizes[0] / 2;
+    for (var sy = 0; sy <= Math.ceil(sR * 0.25); sy++) for (var sx = -Math.ceil(sR * 1.3 / ASP); sx <= Math.ceil(sR * 1.3 / ASP); sx++) {
+      var e = Math.pow(sx * ASP / (sR * 1.3), 2) + Math.pow(sy / (sR * 0.25 + 0.5), 2);
+      if (e <= 1) c.set(cx + sx + Math.round(sR * 0.3 / ASP), base + sy, 0.45 * (1 - e) + 0.1, 'hill');
+    }
+    for (var p = 0; p < 3; p++) {
+      var R = sizes[p] / 2, cy = y - R;
+      balls.push({ y: cy, R: R });
+      for (var dy = -Math.ceil(R); dy <= Math.ceil(R); dy++) for (var dx = -Math.ceil(R / ASP); dx <= Math.ceil(R / ASP); dx++) {
+        var ex = dx * ASP / R, ey = dy / R, dd = Math.sqrt(ex * ex + ey * ey);
+        if (dd > 1) continue;
+        // Light from the top left: bright on that side, a soft shade towards the bottom right.
+        var light = -0.55 * ex - 0.75 * ey, shade = Math.max(0, 0.35 - light) * 0.55;
+        var rimW = Math.max(0.06, 0.7 / R) * (1 + Math.max(0, ex + ey) * 0.8);
+        var rim = dd > 1 - rimW ? 0.95 : 0;
+        var dv = Math.max(rim, Math.min(0.55, shade * shade * 2.2));
+        c.set(cx + dx, cy + dy, dv, rim ? 'stone' : 'hill');
+      }
+      y = cy - R * 0.72;
+    }
+    var head = balls[2], body = balls[1], hr = head.R;
+    // Coal eyes, a smile of coal and a carrot nose.
+    var eo = Math.max(1, Math.round(hr * 0.38 / ASP)), ey2 = Math.round(head.y - hr * 0.22), er = Math.max(0.5, hr * 0.13);
+    disc(cx - eo, ey2, er, 1, 'pine'); disc(cx + eo, ey2, er, 1, 'pine');
+    for (var k = -2; k <= 2; k++) c.set(cx + Math.round(k * hr * 0.2 / ASP), Math.round(head.y + hr * 0.42 - (2 - Math.abs(k)) * hr * 0.06), 1, 'pine');
+    var nl = Math.max(2, Math.round(hr * 0.75 / ASP)), ny = Math.round(head.y + hr * 0.05);
+    for (var n = 0; n < nl; n++) { c.set(cx + n, ny, 1, 'orange'); if (n < nl * 0.45) c.set(cx + n, ny + 1, 0.85, 'orange'); }
+    // Buttons.
+    for (var bt = -1; bt <= 1; bt++) disc(cx, Math.round(body.y + bt * body.R * 0.42), Math.max(0.5, body.R * 0.1), 1, 'pine');
+    // Top hat with a red band.
+    var hw = Math.max(2, Math.round(hr * 0.68 / ASP)), brim = Math.round(head.y - hr * 0.82), hh = Math.max(3, Math.round(hr * 1.05));
+    for (var i = -Math.round(hw * 1.5); i <= Math.round(hw * 1.5); i++) c.set(cx + i, brim, 1, 'pine');
+    for (var j = 1; j <= hh; j++) for (i = -hw; i <= hw; i++) c.set(cx + i, brim - j, j <= Math.max(1, Math.round(hh * 0.2)) ? 1 : (i === -hw + 1 ? 0.7 : 1), j <= Math.max(1, Math.round(hh * 0.2)) ? 'red' : 'pine');
+    // Striped scarf around the neck, with a tail hanging down.
+    var neck = Math.round(head.y + hr * 0.92), sw = Math.round(hr * 1.05 / ASP);
+    for (var t2 = 0; t2 <= Math.max(1, Math.round(hr * 0.25)); t2++) for (i = -sw; i <= sw; i++) c.set(cx + i, neck + t2, (Math.floor(i * ASP / Math.max(1, hr * 0.25)) & 1) ? 0.55 : 1, 'red');
+    var tail = Math.max(3, Math.round(hr * 1.2)), tw = Math.max(1, Math.round(hr * 0.22 / ASP));
+    for (var q = 0; q < tail; q++) for (i = 0; i <= tw; i++) c.set(cx + Math.round(sw * 0.45) + i + Math.round(q * 0.15 / ASP), neck + 1 + q, (Math.floor(q / Math.max(1, hr * 0.25)) & 1) ? 0.55 : 1, 'red');
+    // Twig arms reaching out and up.
+    var armY = Math.round(body.y - body.R * 0.35), armX = Math.round(body.R * 0.9 / ASP), al = Math.round(body.R * 1.6);
+    twig(cx - armX, armY, -1, al, 0.45); twig(cx + armX, armY, 1, al, 0.3);
+    return { x0: cx - sizes[0] / ASP - al / ASP, x1: cx + sizes[0] / ASP + al / ASP };
+  }
+
+  // Mid-tone fill for buildings, in the same textured style as the trees:
+  // a little noise, and lit from the left like the snowman (frac 0 = left edge).
+  function tex(d, x, y, frac) {
+    var hs = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+    return Math.min(1, d * (0.84 + 0.3 * (hs - Math.floor(hs))) * (0.82 + 0.36 * (frac == null ? 0.5 : frac)));
+  }
+  // Stone blocks: mortar lines every third row, staggered vertical joints.
+  function masonry(d, x, y, frac) {
+    var base = tex(d, x, y, frac);
+    if (y % 3 === 0) return base * 0.45;
+    if ((x + (Math.floor(y / 3) % 2) * 3) % 6 === 0) return base * 0.55;
+    return base;
+  }
+  // A house drawn as real shapes: a dark roof with an outlined snow cap and
+  // tile lines, plain walls, lit windows with a cross frame, a framed door and
+  // a chimney. kind is 'cottage' (wide, long ridge) or 'hut' (small gable).
+  function house(c, r, x0, base, h, kind, snowy) {
+    var cot = kind === 'cottage', wallW = (cot ? 1.75 : 1.05) * h, wallH = Math.round(h * (cot ? 0.5 : 0.55));
+    var roofH = h - wallH, ov = h * 0.09, ridge = cot ? wallW * 0.45 : 0, half = wallW / 2;
+    var cx = x0 + Math.round((half + ov) / ASP), roofTop = base - h + 1, wallTop = roofTop + roofH;
+    var hwAt = function (row) { return (ridge / 2 + (row + 1) / roofH * (half + ov - ridge / 2)) / ASP; };
+    var snowT = Math.max(1, Math.round(h * 0.09)), nz = noise1(x0 * 17 + base);
+    // Roof, row by row; depth is how far a cell sits below the roof's top edge in its column.
+    var topRow = function (dx) { for (var q = 0; q < roofH; q++) if (hwAt(q) >= Math.abs(dx)) return q; return roofH; };
+    for (var row = 0; row < roofH; row++) {
+      var hw = hwAt(row);
+      for (var dx = -Math.floor(hw); dx <= Math.floor(hw); dx++) {
+        var depth = row - topRow(dx), y = roofTop + row, edge = Math.abs(dx) > hw - 1;
+        var cut = snowT + Math.round((nz(dx * 0.4) - 0.5) * 2);
+        if (depth === 0 || edge) c.set(cx + dx, y, 1, 'stone');
+        else if (snowy && depth <= cut) c.set(cx + dx, y, 0.03, 'snow');
+        else if (roofH >= 8 && row < roofH - 1 && (row - topRow(0)) % 3 === 0) c.set(cx + dx, y, 0, '');
+        else c.set(cx + dx, y, tex(0.9, cx + dx, y, (dx + hw) / (2 * hw + 1)), 'red');
+      }
+    }
+    var wh = Math.floor(half / ASP);
+    for (dx = -Math.floor(hwAt(roofH - 1)); dx <= Math.floor(hwAt(roofH - 1)); dx++) c.set(cx + dx, wallTop - 1, 1, 'stone');
+    // Walls.
+    for (var y2 = wallTop; y2 <= base; y2++) for (dx = -wh; dx <= wh; dx++) c.set(cx + dx, y2, Math.abs(dx) === wh || y2 === base ? 0.95 : tex(0.74, cx + dx, y2, (dx + wh) / (2 * wh + 1)), 'brown');
+    // Icicles under the eaves.
+    if (snowy) for (dx = -wh; dx <= wh; dx += ri(r, 2, 4)) for (var k = 0; k < ri(r, 0, 2); k++) c.set(cx + dx, wallTop + k, k ? 0.4 : 0.2, 'ice');
+    // Door, framed by a thin paper line, with a knob.
+    var dw = Math.max(1, Math.round(h * 0.09 / ASP)), dh = Math.max(3, Math.round(wallH * 0.62)), dcx = cot ? cx : cx + Math.round(wh * 0.4);
+    for (y2 = base - dh; y2 <= base; y2++) for (dx = -dw - 1; dx <= dw + 1; dx++) c.set(dcx + dx, y2, Math.abs(dx) === dw + 1 || y2 === base - dh ? 0 : 0.85, 'brown');
+    c.set(dcx + dw - 1, base - Math.round(dh * 0.45), 0, '');
+    // Windows: warm glow with a dark cross frame and a light sill.
+    var ww = Math.max(1, Math.round(h * 0.1 / ASP)), whh = Math.max(1, Math.round(h * 0.11)), wy = wallTop + Math.round(wallH * 0.38);
+    var wins = cot ? [-0.6, 0.6] : [-0.5];
+    for (var w = 0; w < wins.length; w++) {
+      var wx = cx + Math.round(wins[w] * wh);
+      for (var yy = -whh - 1; yy <= whh + 1; yy++) for (dx = -ww - 1; dx <= ww + 1; dx++) {
+        var fr = Math.abs(dx) > ww || Math.abs(yy) > whh || dx === 0 || yy === 0;
+        c.set(wx + dx, wy + yy, fr ? 1 : 0.07, fr ? 'stone' : 'gold');
+      }
+      for (dx = -ww - 2; dx <= ww + 2; dx++) c.set(wx + dx, wy + whh + 2, snowy ? 0.04 : 0.5, snowy ? 'snow' : 'stone');
+    }
+    // Chimney on the right half of the roof, with a cap.
+    var chx = cx + Math.round(hwAt(roofH - 1) * 0.5), chw = Math.max(1, Math.round(h * 0.06 / ASP)), cht = roofTop + Math.round(roofH * 0.15) - Math.round(h * 0.12);
+    for (y2 = cht; y2 < roofTop + topRow(chx - cx) + 1; y2++) for (dx = -chw; dx <= chw; dx++) c.set(chx + dx, y2, Math.abs(dx) === chw ? 1 : masonry(0.7, chx + dx, y2, 0.6), 'stone');
+    for (dx = -chw - 1; dx <= chw + 1; dx++) c.set(chx + dx, cht, 1, 'stone');
+    return { x0: cx - Math.ceil(hwAt(roofH - 1)), x1: cx + Math.ceil(hwAt(roofH - 1)), top: roofTop, chimX: chx, chimTop: cht };
+  }
+  function houseW(h, kind) { return Math.round(((kind === 'cottage' ? 1.75 : 1.05) * h + h * 0.18) / ASP); }
+
+  // An arched opening: a rectangle with a round top, filled with d.
+  function arch(c, cx, yTop, hw, hgt, d, col) {
+    var rr = hw * ASP;
+    for (var y = 0; y < hgt; y++) {
+      var w = y < rr ? hw * Math.sqrt(Math.max(0, 1 - Math.pow((rr - y - 0.5) / rr, 2))) : hw;
+      for (var dx = -Math.round(w); dx <= Math.round(w); dx++) c.set(cx + dx, yTop + y, d, col);
+    }
+  }
+  // A village church: a tower with a slender spire and cross, belfry and rose
+  // window, and a nave with a snowy roof and tall arched windows.
+  function drawChurch(c, r, x0, base, h, snowy, flip) {
+    var tw = h * 0.27, tH = Math.round(h * 0.5), sH = Math.round(h * 0.34), crH = Math.round(h * 0.1);
+    var nW = h * 0.95, nWall = Math.round(h * 0.3), nRoof = Math.round(h * 0.16), ov = h * 0.04;
+    var twc = Math.round(tw / 2 / ASP), nwc = Math.round(nW / ASP), dir = flip ? -1 : 1;
+    var tcx = flip ? x0 + nwc + twc : x0 + twc, towerTop = base - tH + 1;
+    // Nave: walls, then the roof as a slanted band with an outlined snow cap.
+    var n0 = tcx + dir * twc, n1 = tcx + dir * (twc + nwc), lo = Math.min(n0, n1), hi = Math.max(n0, n1), wallTop = base - nWall + 1;
+    for (var y = wallTop; y <= base; y++) for (var x = lo; x <= hi; x++) c.set(x, y, x === lo || x === hi || y === base ? 0.95 : masonry(0.76, x, y, (x - lo) / (hi - lo + 1)), 'stone');
+    for (var rr = 0; rr < nRoof; rr++) {
+      var yy = wallTop - nRoof + rr, grow = Math.round((rr + 1) / nRoof * ov * 3 / ASP);
+      for (x = lo - (flip ? grow : 0); x <= hi + (flip ? 0 : grow); x++) {
+        var top = rr === 0, snowRow = snowy && rr > 0 && rr <= Math.max(1, Math.round(nRoof * 0.45));
+        c.set(x, yy, top ? 1 : snowRow ? 0.03 : tex(0.9, x, yy, 0.5), top ? 'stone' : snowRow ? 'snow' : 'red');
+      }
+    }
+    for (x = lo; x <= hi; x++) c.set(x, wallTop - 1, 1, 'stone');
+    // Tall arched windows along the nave.
+    var nwin = Math.max(2, Math.round(nW / (h * 0.28))), aw = Math.max(1, Math.round(h * 0.045 / ASP)), ah = Math.max(3, Math.round(nWall * 0.6));
+    for (var i = 0; i < nwin; i++) {
+      var wx = Math.round(lo + (hi - lo) * (i + 0.5) / nwin);
+      arch(c, wx, wallTop + Math.round(nWall * 0.18) - 1, aw + 1, ah + 2, 1, 'stone');
+      arch(c, wx, wallTop + Math.round(nWall * 0.18), aw, ah, 0.07, 'gold');
+      for (y = wallTop + Math.round(nWall * 0.18) + aw; y < wallTop + Math.round(nWall * 0.18) + ah; y++) c.set(wx, y, 1, 'stone');
+    }
+    // Tower body.
+    for (y = towerTop; y <= base; y++) for (x = -twc; x <= twc; x++) c.set(tcx + x, y, Math.abs(x) === twc || y === base ? 0.95 : masonry(0.78, tcx + x, y, (x + twc) / (2 * twc + 1)), 'stone');
+    // Belfry with a bell, a rose window below it, and an arched door.
+    var bw = Math.max(1, Math.round(twc * 0.45)), bh = Math.max(3, Math.round(tH * 0.22)), by = towerTop + Math.round(tH * 0.1);
+    arch(c, tcx, by, bw, bh, 0, '');
+    var bellR = Math.max(1, Math.round(bw * 0.6));
+    for (var k = 0; k <= bellR; k++) for (x = -k; x <= k; x++) c.set(tcx + x, by + Math.round(bh * 0.35) + k, 1, 'gold');
+    var ry = by + bh + Math.max(2, Math.round(tH * 0.12)), rR = Math.max(1, twc * 0.5 * ASP);
+    for (y = -Math.ceil(rR); y <= Math.ceil(rR); y++) for (x = -Math.ceil(rR / ASP); x <= Math.ceil(rR / ASP); x++) {
+      var dd = Math.sqrt(Math.pow(x * ASP, 2) + y * y);
+      if (dd <= rR) c.set(tcx + x, ry + y, dd > rR - 0.9 || x === 0 || y === 0 ? 1 : 0.18, dd > rR - 0.9 || x === 0 || y === 0 ? 'stone' : 'gold');
+    }
+    var dw = Math.max(1, Math.round(twc * 0.5)), dh = Math.max(4, Math.round(tH * 0.3));
+    arch(c, tcx, base - dh + 1, dw + 1, dh, 0, '');
+    arch(c, tcx, base - dh + 2, dw, dh - 1, 1, 'brown');
+    // Spire: a tall narrow triangle with outlined snow on the lit side, then a thin cross.
+    var spBase = towerTop - 1, half = twc + Math.max(1, Math.round(ov / ASP));
+    for (var sy = 0; sy < sH; sy++) {
+      var hw = Math.round(half * (sy + 1) / sH), yS = spBase - sH + 1 + sy;
+      for (x = -hw; x <= hw; x++) c.set(tcx + x, yS, Math.abs(x) === hw ? 1 : snowy && x < 0 && sy % 3 === 1 ? 0.03 : tex(0.88, tcx + x, yS, (x + hw) / (2 * hw + 1)), 'stone');
+    }
+    for (x = -half - 1; x <= half + 1; x++) c.set(tcx + x, spBase, 1, 'stone');
+    var cTop = spBase - sH - crH;
+    for (y = cTop; y < spBase - sH + 1; y++) c.set(tcx, y, 1, 'gold');
+    var arm = Math.max(1, Math.round(crH * 0.35 / ASP));
+    for (x = -arm; x <= arm; x++) c.set(tcx + x, cTop + Math.round(crH * 0.3), 1, 'gold');
+    return { x0: Math.min(lo, tcx - half) - 1, x1: Math.max(hi, tcx + half) + 1, top: cTop };
+  }
+  function churchW(h) { return Math.round((h * 0.27 + h * 0.95 + h * 0.15) / ASP); }
+
+  // ---------------------------------------------------------------- scenes
+  function mainX(ctx, w) {
+    var g = ctx.region, lo = g.x0 + w / 2, hi = g.x1 - w / 2;
+    return Math.round(hi < lo ? (g.x0 + g.x1) / 2 : (lo + hi) / 2 + (ctx.r() - 0.5) * (hi - lo) * 0.6);
+  }
+  function at(surf, x) { return surf[Math.max(0, Math.min(surf.length - 1, Math.round(x)))]; }
+  function subjectH(ctx, f) { return Math.max(4, Math.round(Math.min(ctx.gy - (ctx.region.y0 || 0) - 1, ctx.c.h * f))); }
+
+  var SCENES = [
+    function forest(ctx) {
+      sky(ctx, {}); landscape(ctx);
+      forestRow(ctx, ctx.surfFar, Math.round(ctx.c.w / 5), 2, Math.round(ctx.c.h * 0.12), 0.45, 'pine');
+      ctx.layerMid();
+      forestRow(ctx, ctx.surfMid, Math.round(ctx.c.w / 10), Math.round(ctx.c.h * 0.12), Math.round(ctx.c.h * 0.28), 0.75, 'pine');
+      ctx.layerNear();
+      forestRow(ctx, ctx.surf, 3, Math.round(ctx.c.h * 0.3), subjectH(ctx, 0.55), 1, 'pine', [[ctx.region.x0 + 8, ctx.region.x1 - 8]]);
+    },
+    function village(ctx) {
+      sky(ctx, {}); landscape(ctx);
+      forestRow(ctx, ctx.surfFar, Math.round(ctx.c.w / 6), 2, Math.round(ctx.c.h * 0.1), 0.45, 'pine');
+      ctx.layerMid(); ctx.layerNear();
+      var g = ctx.region, n = g.x1 - g.x0 > 70 ? 3 : 2, slot = (g.x1 - g.x0) / n, spans = [];
+      for (var i = 0; i < n; i++) {
+        var big = i === Math.floor(n / 2), kind = big ? 'cottage' : 'hut', h = Math.round(subjectH(ctx, big ? 0.3 : 0.24));
+        // Keep each house inside its own slot so neighbours never overlap.
+        while (h > 4 && houseW(h, kind) > slot * 0.88) h--;
+        var w = houseW(h, kind), x = Math.round(g.x0 + slot * (i + 0.5) - w / 2 + (ctx.r() - 0.5) * slot * 0.2);
+        var b = house(ctx.c, ctx.r, x, at(ctx.surf, x + w / 2), h, kind, ctx.p.snow > 0.35);
+        spans.push([b.x0 - 1, b.x1 + 1]);
+        smoke(ctx.c, ctx.r, b.chimX, b.chimTop - 1, Math.round(h * 0.6));
+      }
+      forestRow(ctx, ctx.surf, n + 2, Math.round(ctx.c.h * 0.15), Math.round(ctx.c.h * 0.3), 1, 'pine', spans);
+    },
+    function snowmanScene(ctx) {
+      sky(ctx, {}); landscape(ctx);
+      forestRow(ctx, ctx.surfFar, Math.round(ctx.c.w / 5), 2, Math.round(ctx.c.h * 0.12), 0.45, 'pine');
+      ctx.layerMid();
+      forestRow(ctx, ctx.surfMid, Math.round(ctx.c.w / 14), Math.round(ctx.c.h * 0.12), Math.round(ctx.c.h * 0.26), 0.75, 'pine');
+      ctx.layerNear();
+      var h = subjectH(ctx, 0.5), x = mainX(ctx, h * 1.2), b = snowman(ctx, x, at(ctx.surf, x), h);
+      forestRow(ctx, ctx.surf, 2, Math.round(ctx.c.h * 0.25), subjectH(ctx, 0.45), 1, 'pine', [[b.x0 - 4, b.x1 + 4]]);
+    },
+    function reindeer(ctx) {
+      sky(ctx, { milky: 1.3 }); landscape(ctx);
+      forestRow(ctx, ctx.surfFar, Math.round(ctx.c.w / 6), 2, Math.round(ctx.c.h * 0.1), 0.45, 'pine');
+      ctx.layerMid(); ctx.layerNear();
+      var h = subjectH(ctx, 0.5), w = reindeerW(h), x = mainX(ctx, w);
+      var b = drawReindeer(ctx.c, x, at(ctx.surf, x), h, ctx.r() < 0.5 ? -1 : 1, { nose: ctx.r() < 0.35 });
+      forestRow(ctx, ctx.surf, 3, Math.round(ctx.c.h * 0.2), subjectH(ctx, 0.45), 1, 'pine', [[b.x0 - 3, b.x1 + 3]]);
+    },
+    function lake(ctx) {
+      sky(ctx, {}); landscape(ctx);
+      forestRow(ctx, ctx.surfFar, Math.round(ctx.c.w / 4), 2, Math.round(ctx.c.h * 0.14), 0.5, 'pine');
+      var c = ctx.c, r = ctx.r, top = ctx.mid, ns = noise2(ctx.seed + 31), depthMax = c.h - top;
+      // Mirror image of everything above the waterline, faded and rippled.
+      var src = [];
+      for (var y = 0; y < top; y++) for (var x = 0; x < c.w; x++) src.push(c.dens(x, y));
+      for (y = top; y < c.h; y++) {
+        var dy = y - top, sy = top - 1 - Math.round(dy * 1.15), depth = dy / depthMax;
+        for (x = 0; x < c.w; x++) {
+          var wob = Math.round(Math.sin(y * 1.7 + x * 0.05) * (0.6 + depth * 1.4));
+          var sv = sy >= 0 ? src[sy * c.w + Math.max(0, Math.min(c.w - 1, x + wob))] : 0;
+          var line = ns(x * 0.05, y * 0.8);
+          var dd = y === top ? 0.6 : Math.max(sv * (0.42 - depth * 0.2), line > 0.74 ? 0.32 : 0.015);
+          c.set(x, y, dd, sv > 0.5 && dd > 0.2 ? 'pine' : 'ice');
+        }
+      }
+      // Moonlight on the ice: broken horizontal glints under the moon.
+      if (ctx.moonX != null) for (y = top + 1; y < c.h; y += 2) {
+        var half = Math.round((2 + (y - top) * 0.25) / ASP);
+        for (x = -half; x <= half; x++) if (ns(x * 0.6 + 7, y * 1.3) > 0.42) c.set(ctx.moonX + x, y, 0.6, 'gold');
+      }
+      // Cracks in the ice, a few snow patches, and the curving tracks of skaters.
+      for (var k = 0; k < 4; k++) {
+        var cx0 = ri(r, 0, c.w - 1), cy0 = ri(r, top + 2, c.h - 2), len = ri(r, 8, 30);
+        for (var j = 0; j < len; j++) { cx0 += r() < 0.5 ? 1 : 2; cy0 += r() < 0.2 ? (r() < 0.5 ? -1 : 1) : 0; c.set(cx0, Math.max(top + 1, cy0), 0.5, 'stone'); }
+      }
+      for (k = 0; k < 3; k++) blob(c, ri(r, 0, c.w - 1), ri(r, top + 3, c.h - 2), ri(r, 2, 4), ri(r, 1, 2), function (ex, ey, dd) { return dd > 0.85 ? [0.35, 'snow'] : [0.02, 'snow']; });
+      for (k = 0; k < 2; k++) {
+        var ax = ri(r, Math.round(c.w * 0.2), Math.round(c.w * 0.8)), ay = ri(r, top + 3, c.h - 4), arx = ri(r, 10, 25), ary = ri(r, 2, 4);
+        for (var t = 0; t < 6.283 * 0.75; t += 0.06) c.glyph(ax + Math.cos(t + k) * arx / ASP * ASP, ay + Math.sin(t + k) * ary, '·', 'stone');
+      }
+      // The shore, with a hut and trees.
+      ctx.surf = []; var shore = Math.round(c.w * (r() < 0.5 ? 0.28 : 0.72)), left = shore < c.w / 2;
+      for (x = 0; x < c.w; x++) {
+        var on = left ? x < shore : x > shore, s = on ? ctx.gy - Math.round(2 + Math.abs(x - shore) * 0.08) : c.h;
+        ctx.surf.push(Math.min(s, c.h));
+        if (on) for (y = ctx.surf[x]; y < c.h; y++) c.set(x, y, y === ctx.surf[x] ? 0.55 : 0.05, 'snow');
+      }
+      var h = subjectH(ctx, 0.36), w = houseW(h, 'hut'), hx = left ? Math.max(1, shore - w - 3) : Math.min(c.w - w - 1, shore + 3);
+      var hb = house(c, r, hx, at(ctx.surf, hx + w / 2), h, 'hut', ctx.p.snow > 0.35);
+      smoke(c, r, hb.chimX, hb.chimTop - 1, Math.round(h * 0.7));
+      var trees = left ? [[0, shore]] : [[shore, c.w]];
+      for (var tt = 0; tt < 6; tt++) { var tx = ri(r, trees[0][0] + 3, trees[0][1] - 3); if (tx > hx - 3 && tx < hx + w + 3) continue; pine(c, tx, at(ctx.surf, tx), ri(r, Math.round(c.h * 0.25), subjectH(ctx, 0.55)), 1, 'pine', ctx.p.snow > 0.5); }
+    },
+    function mountains(ctx) {
+      sky(ctx, {});
+      var c = ctx.c, n = noise1(ctx.seed + 5), nr = noise2(ctx.seed + 6), peaks = Math.max(2, Math.round(c.w * ASP / 45));
+      var top = []; for (var x = 0; x < c.w; x++) top.push(c.h);
+      for (var p = 0; p < peaks; p++) {
+        var px = (p + 0.5) * c.w / peaks + (ctx.r() - 0.5) * c.w / peaks * 0.5, ph = ctx.far - ri(ctx.r, Math.round(c.h * 0.22), Math.round(c.h * 0.42));
+        for (x = 0; x < c.w; x++) {
+          var dx = (x - px) * ASP, sl = 0.6 + 0.3 * n(x * 0.05 + p * 9);
+          var s = Math.round(ph + Math.abs(dx) * sl + (nr(x * 0.3, p) - 0.5) * 2.5);
+          if (s >= top[x]) continue;
+          top[x] = s;
+          for (var y = Math.max(0, s); y < ctx.far + 2; y++) {
+            var cap = ph + (ctx.far - ph) * (0.3 + 0.15 * nr(x * 0.2, 9)), lit = dx < 0;
+            var gully = nr(x * 0.35 + p * 3, y * 0.12) > 0.68;
+            var dd = y < cap ? (gully ? 0.3 : lit ? 0.03 : 0.14) : (lit ? 0.38 : 0.7) + (gully ? 0.15 : 0);
+            if (y === s) dd = Math.max(dd, 0.6);
+            c.set(x, y, dd, y < cap ? 'snow' : 'stone');
+          }
+        }
+      }
+      landscape(ctx);
+      forestRow(ctx, ctx.surfFar, Math.round(c.w / 4), 2, Math.round(c.h * 0.1), 0.6, 'pine');
+      ctx.layerMid();
+      forestRow(ctx, ctx.surfMid, Math.round(c.w / 12), Math.round(c.h * 0.1), Math.round(c.h * 0.22), 0.8, 'pine');
+      ctx.layerNear();
+      forestRow(ctx, ctx.surf, 4, Math.round(c.h * 0.2), subjectH(ctx, 0.45), 1, 'pine', [[ctx.region.x0 + 10, ctx.region.x1 - 10]]);
+    },
+    function church(ctx) {
+      sky(ctx, { moon: false });
+      landscape(ctx);
+      forestRow(ctx, ctx.surfFar, Math.round(ctx.c.w / 5), 2, Math.round(ctx.c.h * 0.1), 0.45, 'pine');
+      ctx.layerMid(); ctx.layerNear();
+      var h = subjectH(ctx, 0.62), w = churchW(h), x = mainX(ctx, w) - Math.round(w / 2);
+      var b = drawChurch(ctx.c, ctx.r, x, at(ctx.surf, x + w / 2), h, ctx.p.snow > 0.35, ctx.r() < 0.5);
+      var stx = Math.max(ctx.region.x0 + 6, Math.min(ctx.c.w - 6, b.x0 + Math.round(w * (ctx.r() < 0.5 ? 0.15 : 0.85))));
+      star(ctx.c, stx, Math.max(3, Math.min(b.top - 4, Math.round(ctx.far * 0.22))), Math.max(2, Math.round(ctx.c.h * 0.07)), 'gold');
+      forestRow(ctx, ctx.surf, 4, Math.round(ctx.c.h * 0.18), subjectH(ctx, 0.42), 1, 'pine', [[b.x0 - 2, b.x1 + 2]]);
+    }
+  ];
+
+  function treeScene(ctx, o) {
+    sky(ctx, {}); landscape(ctx);
+    forestRow(ctx, ctx.surfFar, Math.round(ctx.c.w / 5), 2, Math.round(ctx.c.h * 0.1), 0.45, 'pine');
+    ctx.layerMid(); ctx.layerNear();
+    var g = ctx.region, cx = Math.round((g.x0 + g.x1) / 2), base = at(ctx.surf, cx);
+    var full = Math.max(5, Math.min(base - (g.y0 || 0) - 2, (g.x1 - g.x0) / 1.25, ctx.c.h * 0.8));
+    var H = Math.max(3, Math.round(full * (o.growth == null ? 1 : o.growth))), spots = [];
+    var t = pine(ctx.c, cx, base, H, 1, 'pine', ctx.p.snow > 0.5, spots);
+    // Ornament spots are fixed for the year, so they stay put and add up day by day.
+    var orng = rngFor(ctx.p.year * 31 + 7), chosen = [], all = shuffle(orng, spots);
+    for (var a = 0; a < all.length && chosen.length < 24; a++) {
+      var ok = true;
+      for (var b = 0; b < chosen.length; b++) if (Math.abs(chosen[b][0] - all[a][0]) * ASP + Math.abs(chosen[b][1] - all[a][1]) < Math.max(2.5, H / 7)) { ok = false; break; }
+      if (ok) chosen.push(all[a]);
+    }
+    var R = Math.max(0.6, H / 48);
+    // Light strings: one swag per tier, on in December.
+    if (o.ornaments || o.burst) for (var tr = 1; tr < t.tiers; tr++) {
+      var ty0 = t.top + tr * t.th + t.th * 0.45, thw = t.hw * (tr + 0.6) / t.tiers;
+      for (var lx = -thw + 1; lx <= thw - 1; lx += Math.max(2, 2.4 / ASP)) {
+        var ly = ty0 + t.th * 0.3 * (1 - Math.pow(lx / thw, 2));
+        bulb(ctx.c, Math.round(cx + lx), Math.round(ly), ['gold', 'red', 'blue', 'gold'][Math.round(lx) & 3]);
+      }
+    }
+    for (var i = 0; i < Math.min(o.ornaments || 0, chosen.length); i++) {
+      var orr = rngFor(ctx.p.year * 101 + i);
+      bauble(ctx.c, chosen[i][0], chosen[i][1], R * (0.8 + orr() * 0.5), pick(orr, ['red', 'gold', 'blue', 'pink', 'purple', 'red', 'gold']));
+    }
+    if (o.ornaments || o.burst) star(ctx.c, cx, t.top - 1, o.burst ? Math.max(2, Math.round(H / 7)) : 1, 'gold');
+    var avoid = [[cx - t.hw - 3, cx + t.hw + 3]];
+    if (o.gifts) {
+      var gw = Math.max(4, Math.round(H * 0.1 / ASP)), gh = Math.max(3, Math.round(H * 0.09));
+      gift(ctx.c, cx - Math.round(t.hw) - gw + 2, base, gw, gh, 'red', 1);
+      gift(ctx.c, cx + Math.round(t.hw * 0.4), base, Math.round(gw * 1.3), Math.round(gh * 1.3), 'blue', 2);
+      gift(ctx.c, cx - Math.round(t.hw * 0.5), base, gw, Math.max(2, gh - 1), 'purple', 0);
+    }
+    forestRow(ctx, ctx.surf, 3, Math.round(ctx.c.h * 0.12), Math.round(H * 0.45), 1, 'pine', avoid);
+    if (o.sleigh) {
+      // The sleigh reaches 0.55 sh behind its centre and 2.3 sh in front (the reindeer).
+      var sh = Math.max(6, Math.round(ctx.c.h * 0.14)), back = Math.ceil(sh * 0.55 / ASP), front = Math.ceil(sh * 2.3 / ASP);
+      var sx = Math.max(g.x0 + back, ctx.c.w - front - 2);
+      sleigh(ctx.c, sx, Math.max(sh + 2, Math.round(ctx.far * 0.3)), sh, 1);
+    }
+  }
+  function fireworkScene(ctx, bursts) {
+    sky(ctx, { moon: false, milky: 0.5 }); landscape(ctx);
+    // Spread over the whole width; bursts near the card are partly hidden by it, like behind a window frame.
+    var slot = ctx.c.w / bursts, box = ctx.cardBox;
+    for (var i = 0; i < bursts; i++) {
+      var R = Math.max(2, Math.min(Math.round(ctx.far * 0.3), Math.floor(slot * 0.5 * ASP))), bx = Math.round(slot * (i + 0.5) + (ctx.r() - 0.5) * slot * 0.3);
+      var minY = bx - R / ASP < box.x1 + 2 ? box.y1 + R + 2 : R + 1;
+      firework(ctx.c, ctx.r, bx, ri(ctx.r, minY, Math.max(minY, ctx.far - R - 2)), R, ctx.gy);
+    }
+    forestRow(ctx, ctx.surfFar, Math.round(ctx.c.w / 6), 2, Math.round(ctx.c.h * 0.1), 0.45, 'pine');
+    ctx.layerMid(); ctx.layerNear();
+    var n = ctx.c.w > 80 ? 4 : 2;
+    for (var hh = 0; hh < n; hh++) {
+      var h = Math.round(subjectH(ctx, 0.2)), x = Math.round((hh + 0.2 + ctx.r() * 0.5) * ctx.c.w / n);
+      house(ctx.c, ctx.r, x, at(ctx.surf, x + houseW(h, 'hut') / 2), h, 'hut', ctx.p.snow > 0.35);
+    }
+  }
+
+  function dailyIndex(dayNo) {
+    var week = Math.floor((dayNo + 3) / 7), perm = shuffle(rngFor(week * 7919 + 1), [0, 1, 2, 3, 4, 5, 6]);
+    var idx = perm[(dayNo + 3) % 7];
+    if ((dayNo + 3) % 7 === 0) {
+      var prev = shuffle(rngFor((week - 1) * 7919 + 1), [0, 1, 2, 3, 4, 5, 6])[6];
+      if (idx === prev) idx = perm[1];
+    }
+    return idx;
+  }
+
+  function drawScene(ctx, mode) {
+    var p = ctx.p;
+    if (p.phase === 'xmas' || p.phase === 'second') return treeScene(ctx, { ornaments: 24, gifts: true, burst: true });
+    if (p.phase === 'nycount') return fireworkScene(ctx, Math.max(2, 6 - p.nyDays));
+    if (p.phase === 'newyear') return fireworkScene(ctx, 5);
+    var growing = mode.indexOf('grow') === 0, daily = mode.indexOf('daily') === 0;
+    if (p.phase === 'advent' && !daily) return treeScene(ctx, { ornaments: 25 - p.days, sleigh: p.days === 1, gifts: p.days === 1 });
+    if (growing) return treeScene(ctx, { growth: Math.max(0.15, Math.min(1, 0.15 + 0.85 * (150 - p.days) / 125)) });
+    SCENES[dailyIndex(p.dayNo)](ctx);
+  }
+  function drawAll(ctx, mode) { drawScene(ctx, mode); snowfall(ctx); }
+
+  // ---------------------------------------------------------------- card
+  // Clears the area under the countdown card, with a soft dotted fade around it.
+  function clearCard(c, b) {
+    for (var y = b.y0 - 1; y <= b.y1 + 1; y++) for (var x = b.x0 - 2; x <= b.x1 + 2; x++) {
+      var inside = y >= b.y0 && y <= b.y1 && x >= b.x0 && x <= b.x1;
+      if (inside) c.set(x, y, 0, ''); else c.set(x, y, Math.min(c.dens(x, y), 0.18), c.k[y * c.w + x]);
+    }
+  }
+
+  function fillCard(el, p, lang, counter) {
+    var t = T[lang], q = function (s) { return el.querySelector(s); };
+    var pre = '', num = '', label = '', big = '', sub = '';
+    if (p.phase === 'season' || p.phase === 'advent') {
+      pre = plural(lang, p.days, t.pre); num = String(p.days);
+      label = plural(lang, p.days, counter.indexOf('sleep') === 0 ? t.sleeps : t.days);
+      if (p.days === 1) sub = t.eve;
+    } else if (p.phase === 'xmas') big = t.merry;
+    else if (p.phase === 'second') { big = t.merry; sub = t.second; }
+    else if (p.phase === 'nycount') { pre = plural(lang, p.nyDays, t.pre); num = String(p.nyDays); label = plural(lang, p.nyDays, t.ny); }
+    else { big = t.happy; sub = p.days + ' ' + plural(lang, p.days, t.days); }
+    [['.xmas__pre', pre], ['.xmas__num', num], ['.xmas__label', label], ['.xmas__big', big], ['.xmas__sub', sub]].forEach(function (f) {
+      var n = q(f[0]); if (!n) return;
+      n.textContent = f[1]; n.classList.toggle('hidden', !f[1]);
+    });
+  }
+
+  // ---------------------------------------------------------------- render
+  function render(el) {
+    var art = el.querySelector('.xmas__art'), card = el.querySelector('.xmas__card');
+    var W = el.clientWidth, H = el.clientHeight;
+    if (!W || !H) return;
+    var lang = pickLang(el.dataset.lang, el.dataset.locale), mode = norm(el.dataset.mode), counter = norm(el.dataset.counter);
+    var p = phaseFor(localToday(el));
+    var screen = el.closest('.screen'), sc = screen ? screen.className : '';
+    var useColor = norm(el.dataset.colors) !== 'off' && (/screen--color-/.test(sc) || !/screen--(1|2)bit/.test(sc));
+
+    // The local date, shown bottom right.
+    var td = el.querySelector('.xmas__date'), dbox = el.querySelector('.xmas__datebox');
+    if (td) { try { td.textContent = new Intl.DateTimeFormat(lang, { day: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(p.today)); } catch (e) { td.textContent = ''; } }
+    fillCard(el, p, lang, counter);
+
+    // Grid size: about 190 columns on a full OG screen, 280 on the X.
+    var target = W >= 1000 ? 280 : W >= 600 ? 190 : 100;
+    art.style.fontSize = Math.max(5, W / target / 0.6).toFixed(2) + 'px';
+    art.innerHTML = '<span>' + new Array(101).join('M') + '</span>';
+    var cw = art.firstChild.offsetWidth / 100; // layout px, unaffected by screen zoom
+    var chh = parseFloat(art.style.fontSize) * 0.62; // matches line-height in the style block
+    ASP = cw / chh;
+    MONO = !useColor;
+    var cols = Math.floor(W / cw), rows = Math.floor(H / chh);
+    var ox = (W - cols * cw) / 2, oy = (H - rows * chh) / 2;
+    art.style.left = ox + 'px'; art.style.top = oy + 'px'; art.style.right = 'auto'; art.style.bottom = 'auto';
+
+    // Card: snap it to the character grid and leave room for a 1-cell frame.
+    var pos = el.dataset.card || 'tl';
+    if (pos !== 'top' && H > W * 1.1) pos = 'top'; // portrait: card on top, scene below
+    card.style.width = 'auto'; card.style.height = 'auto'; card.style.left = '0px'; card.style.top = '0px';
+    card.style.maxWidth = Math.round(W * (pos === 'top' ? 0.9 : 0.42)) + 'px';
+    var bw = Math.ceil(card.offsetWidth / cw) + 4, bh = Math.ceil(card.offsetHeight / chh) + 2; // 1-cell padding all round
+    var bx = pos === 'top' ? Math.floor((cols - bw) / 2) : 2, by = pos === 'left' ? Math.max(0, Math.floor((rows - bh) / 2) - 1) : 1;
+    var box = { x0: bx, y0: by, x1: bx + bw - 1, y1: by + bh - 1 };
+    card.style.left = (ox + (bx + 1) * cw) + 'px'; card.style.top = (oy + (by + 1) * chh) + 'px';
+    card.style.width = ((bw - 2) * cw) + 'px'; card.style.height = ((bh - 2) * chh) + 'px';
+
+    var region = pos === 'top' ? { x0: 0, x1: cols - 1, y0: box.y1 + 1 } : { x0: box.x1 + 2, x1: cols - 1, y0: 0 };
+    var ctx = {
+      c: new Canvas(cols, rows), r: rngFor(p.dayNo * 13 + 5), seed: p.dayNo * 7 + 3, p: p, cardBox: box, region: region,
+      far: Math.round(rows * 0.62), mid: Math.round(rows * 0.74), gy: Math.round(rows * 0.87)
+    };
+    drawAll(ctx, mode);
+    clearCard(ctx.c, box);
+    if (dbox && td && td.textContent) {
+      // Snap the date label to the grid in the bottom right corner and clear the art under it.
+      dbox.style.left = '0px'; dbox.style.top = '0px';
+      var dw = Math.ceil(dbox.offsetWidth / cw) + 2, dh = Math.ceil(dbox.offsetHeight / chh) + 1;
+      var dx = cols - dw - 1, dy = rows - dh - 1;
+      dbox.style.left = (ox + (dx + 1) * cw) + 'px'; dbox.style.top = (oy + dy * chh + (dh * chh - dbox.offsetHeight) / 2) + 'px';
+      clearCard(ctx.c, { x0: dx, y0: dy, x1: dx + dw - 1, y1: dy + dh - 1 });
+    }
+    art.innerHTML = ctx.c.html(useColor);
+  }
+
+  function run() { var els = document.querySelectorAll('.xmas'); for (var i = 0; i < els.length; i++) { try { render(els[i]); } catch (e) { if (window.console) console.error(e); } } }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run); else setTimeout(run, 0);
+  window.addEventListener('load', run);
+  window.XMAS_ASCII_RUN = run;
+  window.XMAS_ASCII_DEBUG = { dailyIndex: dailyIndex, names: SCENES.map(function (f) { return f.name; }) };
+})();
+</script>

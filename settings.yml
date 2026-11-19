@@ -1,0 +1,43 @@
+---
+strategy: none
+refresh_interval: 360
+no_screen_padding: 'no'
+dark_mode: 'no'
+name: ASCII Christmas Countdown
+custom_fields:
+  - keyname: author_bio
+    name: About this plugin
+    field_type: author_bio
+    description: "A cozy dot-art countdown to Christmas. Every day a new winter scene, more snow as Christmas nears, and from 1 December a tree that gets one ornament a day. Works on OG, X and color screens, in 12 languages."
+    email_address: trmnl@achtnegen.nl
+    category: entertainment
+  - keyname: language
+    field_type: select
+    name: Language
+    description: Auto follows your TRMNL account language.
+    options: ['Auto', 'English', 'Nederlands', 'Deutsch', 'Français', 'Español', 'Italiano', 'Português', 'Svenska', 'Dansk', 'Norsk', 'Polski', 'Suomi']
+    default: Auto
+  - keyname: mode
+    field_type: select
+    name: Scene
+    description: 'Combined: a new scene every day, then from 1 December a tree that gets one ornament per day. Growing tree: the tree grows all season. Daily scene: a different scene every day.'
+    options: ['Combined', 'Growing tree', 'Daily scene']
+    default: Combined
+  - keyname: counter
+    field_type: select
+    name: Count
+    description: Count days, or sleeps (nights).
+    options: ['Days', 'Sleeps']
+    default: Days
+  - keyname: colors
+    field_type: select
+    name: Colors
+    description: Auto uses color on color screens and gray tones on 16-shade screens. Off keeps everything black.
+    options: ['Auto', 'Off']
+    default: Auto
+  - keyname: test_date
+    field_type: string
+    name: Test date
+    description: Optional. Pretend it is this date (YYYY-MM-DD) to preview other phases. Leave empty for normal use.
+    placeholder: '2026-12-24'
+    optional: true
